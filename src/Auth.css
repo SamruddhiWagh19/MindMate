@@ -393,3 +393,44 @@
     transition: none;
   }
 }
+
+
+/* PASSWORD RECOVERY */
+.auth-message-success {
+  border-color: #376f62;
+  background: #102923;
+  color: #b6f2d8;
+}
+
+.auth-message-error {
+  border-color: #75434a;
+  background: #2a171b;
+  color: #ffc2c8;
+}
+
+.auth-forgot {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 13px;
+}
+
+.auth-forgot button {
+  border: 0;
+  background: transparent;
+  color: #aeeaff;
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+  padding: 4px 0;
+}
+
+.auth-forgot button:hover {
+  color: #e0f8ff;
+  text-decoration: underline;
+  text-underline-offset: 4px;
+}
+
+.auth-form-container input[readonly] {
+  opacity: .75;
+  cursor: not-allowed;
+}

@@ -1,8 +1,26 @@
-
 import { useEffect, useMemo, useState } from 'react'
 import './App.css'
 import { supabase } from './lib/supabase'
 import Auth from './Auth'
+import Productivity from './features/productivity/Productivity'
+
+import {
+  loadLibrary,
+  createSubject,
+  createChapter,
+  createStudySet,
+  saveStudyNotes,
+  addStudyResource,
+  deleteStudyResource,
+  addStudyFlashcard,
+  deleteStudyFlashcard,
+  uploadStudyFile,
+  openStudyFile,
+  deleteStudyFile,
+  deleteStudySetCloud,
+  deleteChapterCloud,
+  deleteSubjectCloud,
+} from './lib/mindmateLibrary'
 
 const navigation = [
   {
@@ -42,95 +60,6 @@ const studyTabs = [
   { id: 'quizzes', label: 'Quizzes', icon: '✎' },
 ]
 
-function openDatabase() {
-  return new Promise((resolve, reject) => {
-    const request = indexedDB.open('MindMateFiles', 1)
-
-    request.onupgradeneeded = () => {
-      const db = request.result
-      if (!db.objectStoreNames.contains('files')) {
-        db.createObjectStore('files', { keyPath: 'id' })
-      }
-    }
-
-    request.onsuccess = () => resolve(request.result)
-    request.onerror = () => reject(request.error)
-  })
-}
-
-async function saveFile(file) {
-  const db = await openDatabase()
-  const id = `${Date.now()}-${Math.random().toString(36).slice(2)}`
-
-  return new Promise((resolve, reject) => {
-    const transaction = db.transaction('files', 'readwrite')
-    transaction.objectStore('files').put({
-      id,
-      name: file.name,
-      type: file.type,
-      size: file.size,
-      blob: file,
-    })
-
-    transaction.oncomplete = () => {
-      db.close()
-      resolve(id)
-    }
-
-    transaction.onerror = () => {
-      db.close()
-      reject(transaction.error)
-    }
-  })
-}
-
-async function getFile(id) {
-  const db = await openDatabase()
-
-  return new Promise((resolve, reject) => {
-    const transaction = db.transaction('files', 'readonly')
-    const request = transaction.objectStore('files').get(id)
-
-    request.onsuccess = () => {
-      db.close()
-      resolve(request.result || null)
-    }
-
-    request.onerror = () => {
-      db.close()
-      reject(request.error)
-    }
-  })
-}
-
-async function removeFile(id) {
-  const db = await openDatabase()
-
-  return new Promise((resolve, reject) => {
-    const transaction = db.transaction('files', 'readwrite')
-    transaction.objectStore('files').delete(id)
-
-    transaction.oncomplete = () => {
-      db.close()
-      resolve()
-    }
-
-    transaction.onerror = () => {
-      db.close()
-      reject(transaction.error)
-    }
-  })
-}
-
-function toDataUrl(file) {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader()
-    reader.onload = () => resolve(reader.result)
-    reader.onerror = () => reject(reader.error)
-    reader.readAsDataURL(file)
-  })
-}
-
 function formatSize(bytes) {
   if (bytes < 1024) return `${bytes} B`
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`
@@ -138,37 +67,46 @@ function formatSize(bytes) {
 }
 
 function App() {
-  // SUPABASE AUTHENTICATION
+  // Authentication
   const [session, setSession] = useState(null)
   const [authLoading, setAuthLoading] = useState(true)
   const [signingOut, setSigningOut] = useState(false)
 
   useEffect(() => {
+    let mounted = true
+
     supabase.auth.getSession().then(({ data, error }) => {
       if (error) console.error(error)
-      setSession(data?.session ?? null)
-      setAuthLoading(false)
+      if (mounted) {
+        setSession(data?.session ?? null)
+        setAuthLoading(false)
+      }
     })
 
     const {
       data: { subscription },
-    } = supabase.auth.onAuthStateChange((_event, newSession) => {
-      setSession(newSession)
-      setAuthLoading(false)
+    } = supabase.auth.onAuthStateChange((event, newSession) => {
+      if (event === 'PASSWORD_RECOVERY') return
+      if (mounted) {
+        setSession(newSession)
+        setAuthLoading(false)
+      }
     })
 
-    return () => subscription.unsubscribe()
+    return () => {
+      mounted = false
+      subscription.unsubscribe()
+    }
   }, [])
 
   async function handleSignOut() {
     if (signingOut) return
-
     setSigningOut(true)
 
     const { error } = await supabase.auth.signOut()
 
     if (error) {
-      console.error('Sign out failed:', error)
+      console.error(error)
       window.alert('Could not sign out. Please try again.')
       setSigningOut(false)
       return
@@ -178,15 +116,15 @@ function App() {
     setSigningOut(false)
   }
 
-  // STUDENT ACCOUNT DETAILS
   const studentName =
     session?.user?.user_metadata?.full_name?.trim() ||
     session?.user?.email?.split('@')[0] ||
     'Student'
 
   const studentInitial = studentName.charAt(0).toUpperCase()
+  const userId = session?.user?.id
 
-  // EXISTING MINDMATE STATE
+  // Main application state
   const [activePage, setActivePage] = useState('Dashboard')
 
   const [tasks, setTasks] = useState([
@@ -195,27 +133,44 @@ function App() {
     { id: 3, title: 'Revise yesterday’s notes', done: true },
   ])
 
-  const [subjects, setSubjects] = useState(() => {
-    try {
-      const saved = JSON.parse(localStorage.getItem('mindmate-library')) || []
+  // Supabase Library state
+  const [subjects, setSubjects] = useState([])
+  const [libraryLoading, setLibraryLoading] = useState(true)
+  const [libraryError, setLibraryError] = useState('')
+  const [savingNotes, setSavingNotes] = useState(false)
 
-      return saved.map(subject => ({
-        ...subject,
-        chapters: (subject.chapters || []).map(chapter => ({
-          ...chapter,
-          sets: (chapter.sets || []).map(set => ({
-            ...set,
-            notes: set.notes || '',
-            files: set.files || [],
-            resources: set.resources || [],
-            flashcards: set.flashcards || [],
-          })),
-        })),
-      }))
-    } catch {
-      return []
+  useEffect(() => {
+    if (!userId) {
+      setSubjects([])
+      setLibraryLoading(false)
+      return
     }
-  })
+
+    let cancelled = false
+
+    async function fetchLibrary() {
+      setLibraryLoading(true)
+      setLibraryError('')
+
+      try {
+        const data = await loadLibrary(userId)
+        if (!cancelled) setSubjects(data)
+      } catch (error) {
+        console.error('Library loading failed:', error)
+        if (!cancelled) {
+          setLibraryError('Could not load your library. Please refresh and try again.')
+        }
+      } finally {
+        if (!cancelled) setLibraryLoading(false)
+      }
+    }
+
+    fetchLibrary()
+
+    return () => {
+      cancelled = true
+    }
+  }, [userId])
 
   const [selectedSubjectId, setSelectedSubjectId] = useState(null)
   const [selectedChapterId, setSelectedChapterId] = useState(null)
@@ -240,10 +195,6 @@ function App() {
   const [tutorPrompt, setTutorPrompt] = useState('')
   const [tutorMessages, setTutorMessages] = useState([])
   const [tutorLoading, setTutorLoading] = useState(false)
-
-  useEffect(() => {
-    localStorage.setItem('mindmate-library', JSON.stringify(subjects))
-  }, [subjects])
 
   const selectedSubject = subjects.find(
     subject => subject.id === selectedSubjectId
@@ -319,34 +270,44 @@ function App() {
     setShowCreateForm(false)
   }
 
-  function createLibraryItem(event) {
+  // Create Library items in Supabase
+  async function createLibraryItem(event) {
     event.preventDefault()
 
     const name = newItemName.trim()
-    if (!name) return
+    if (!name || !userId) return
 
-    if (!selectedSubjectId) {
-      setSubjects(current => [
-        ...current,
-        { id: Date.now(), name, chapters: [] },
-      ])
-    } else if (!selectedChapterId) {
-      setSubjects(current =>
-        current.map(subject =>
+    try {
+      if (!selectedSubjectId) {
+        const row = await createSubject(userId, name)
+
+        setSubjects(current => [
+          ...current,
+          { id: row.id, name: row.name, chapters: [] },
+        ])
+      } else if (!selectedChapterId) {
+        const row = await createChapter(userId, selectedSubjectId, name)
+
+        setSubjects(current => current.map(subject =>
           subject.id === selectedSubjectId
             ? {
                 ...subject,
                 chapters: [
                   ...subject.chapters,
-                  { id: Date.now(), name, sets: [] },
+                  { id: row.id, name: row.name, sets: [] },
                 ],
               }
             : subject
+        ))
+      } else {
+        const row = await createStudySet(
+          userId,
+          selectedChapterId,
+          name,
+          newItemDescription.trim()
         )
-      )
-    } else {
-      setSubjects(current =>
-        current.map(subject =>
+
+        setSubjects(current => current.map(subject =>
           subject.id === selectedSubjectId
             ? {
                 ...subject,
@@ -357,9 +318,9 @@ function App() {
                         sets: [
                           ...chapter.sets,
                           {
-                            id: Date.now(),
-                            name,
-                            description: newItemDescription.trim(),
+                            id: row.id,
+                            name: row.name,
+                            description: row.description || '',
                             notes: '',
                             files: [],
                             resources: [],
@@ -371,46 +332,73 @@ function App() {
                 ),
               }
             : subject
-        )
-      )
+        ))
+      }
+
+      setNewItemName('')
+      setNewItemDescription('')
+      setShowCreateForm(false)
+    } catch (error) {
+      console.error('Create failed:', error)
+      window.alert(error.message || 'Could not create this item.')
     }
-
-    setNewItemName('')
-    setNewItemDescription('')
-    setShowCreateForm(false)
   }
 
-  function deleteSubject(id) {
+  // Delete Library items and their child records
+  async function deleteSubject(id) {
     if (!window.confirm('Delete this subject and everything inside it?')) return
-    setSubjects(current => current.filter(subject => subject.id !== id))
+
+    const subject = subjects.find(item => item.id === id)
+    if (!subject) return
+
+    try {
+      await deleteSubjectCloud(userId, subject)
+      setSubjects(current => current.filter(item => item.id !== id))
+      setSelectedSubjectId(null)
+      setSelectedChapterId(null)
+      setSelectedStudySetId(null)
+    } catch (error) {
+      console.error(error)
+      window.alert(error.message || 'Could not delete this subject.')
+    }
   }
 
-  function deleteChapter(id) {
+  async function deleteChapter(id) {
     if (!window.confirm('Delete this chapter and its study sets?')) return
 
-    setSubjects(current =>
-      current.map(subject =>
+    const chapter = selectedSubject?.chapters.find(item => item.id === id)
+    if (!chapter) return
+
+    try {
+      await deleteChapterCloud(userId, chapter)
+
+      setSubjects(current => current.map(subject =>
         subject.id === selectedSubjectId
           ? {
               ...subject,
-              chapters: subject.chapters.filter(chapter => chapter.id !== id),
+              chapters: subject.chapters.filter(item => item.id !== id),
             }
           : subject
-      )
-    )
+      ))
+
+      setSelectedChapterId(null)
+      setSelectedStudySetId(null)
+    } catch (error) {
+      console.error(error)
+      window.alert(error.message || 'Could not delete this chapter.')
+    }
   }
 
   async function deleteStudySet(id) {
     if (!window.confirm('Delete this study set?')) return
 
     const set = selectedChapter?.sets.find(item => item.id === id)
+    if (!set) return
 
-    for (const file of set?.files || []) {
-      await removeFile(file.id).catch(() => {})
-    }
+    try {
+      await deleteStudySetCloud(userId, set)
 
-    setSubjects(current =>
-      current.map(subject =>
+      setSubjects(current => current.map(subject =>
         subject.id === selectedSubjectId
           ? {
               ...subject,
@@ -424,8 +412,11 @@ function App() {
               ),
             }
           : subject
-      )
-    )
+      ))
+    } catch (error) {
+      console.error(error)
+      window.alert(error.message || 'Could not delete this study set.')
+    }
   }
 
   function createLabel() {
@@ -468,9 +459,7 @@ function App() {
 
         {selectedChapterId && (
           <>
-            <label htmlFor="new-item-description">
-              Description (optional)
-            </label>
+            <label htmlFor="new-item-description">Description (optional)</label>
             <textarea
               id="new-item-description"
               rows="3"
@@ -488,29 +477,31 @@ function App() {
     )
   }
 
+  // Upload files to private Supabase Storage
   async function handleFileUpload(event) {
     const files = Array.from(event.target.files || [])
     if (!selectedStudySet) return
 
     for (const file of files) {
       try {
-        const id = await saveFile(file)
+        const row = await uploadStudyFile(userId, selectedStudySet.id, file)
 
         updateStudySet(selectedStudySet.id, current => ({
           ...current,
           files: [
-            ...(current.files || []),
+            ...current.files,
             {
-              id,
-              name: file.name,
-              type: file.type || 'Unknown',
-              size: file.size,
+              id: row.id,
+              name: row.name,
+              type: row.type || '',
+              size: Number(row.size || 0),
+              storagePath: row.storage_path,
             },
           ],
         }))
       } catch (error) {
         console.error(error)
-        window.alert(`Could not save ${file.name}. Please try again.`)
+        window.alert(`Could not upload ${file.name}: ${error.message}`)
       }
     }
 
@@ -519,16 +510,8 @@ function App() {
 
   async function openSavedFile(file) {
     try {
-      const saved = await getFile(file.id)
-
-      if (!saved?.blob) {
-        window.alert('This file could not be found in browser storage.')
-        return
-      }
-
-      const url = URL.createObjectURL(saved.blob)
+      const url = await openStudyFile(file.storagePath)
       window.open(url, '_blank', 'noopener,noreferrer')
-      setTimeout(() => URL.revokeObjectURL(url), 60000)
     } catch (error) {
       console.error(error)
       window.alert('Could not open this file.')
@@ -538,21 +521,27 @@ function App() {
   async function deleteSavedFile(file) {
     if (!window.confirm(`Remove "${file.name}"?`)) return
 
-    await removeFile(file.id).catch(console.error)
+    try {
+      await deleteStudyFile(userId, file)
 
-    updateStudySet(selectedStudySet.id, current => ({
-      ...current,
-      files: current.files.filter(item => item.id !== file.id),
-    }))
+      updateStudySet(selectedStudySet.id, current => ({
+        ...current,
+        files: current.files.filter(item => item.id !== file.id),
+      }))
+    } catch (error) {
+      console.error(error)
+      window.alert(error.message || 'Could not delete this file.')
+    }
   }
 
-  function addResource(event) {
+  // Save resources in Supabase
+  async function addResource(event) {
     event.preventDefault()
 
     const name = resourceName.trim()
     const url = resourceUrl.trim()
 
-    if (!name || !url) return
+    if (!name || !url || !selectedStudySet) return
 
     let validUrl
 
@@ -566,49 +555,95 @@ function App() {
       return
     }
 
-    updateStudySet(selectedStudySet.id, current => ({
-      ...current,
-      resources: [
-        ...(current.resources || []),
-        { id: Date.now(), name, url: validUrl.href },
-      ],
-    }))
+    try {
+      const row = await addStudyResource(
+        userId,
+        selectedStudySet.id,
+        name,
+        validUrl.href
+      )
 
-    setResourceName('')
-    setResourceUrl('')
+      updateStudySet(selectedStudySet.id, current => ({
+        ...current,
+        resources: [
+          ...current.resources,
+          { id: row.id, name: row.title, url: row.url },
+        ],
+      }))
+
+      setResourceName('')
+      setResourceUrl('')
+    } catch (error) {
+      console.error(error)
+      window.alert(error.message || 'Could not save this resource.')
+    }
   }
 
-  function addFlashcard(event) {
+  async function removeResource(id) {
+    try {
+      await deleteStudyResource(userId, id)
+
+      updateStudySet(selectedStudySet.id, current => ({
+        ...current,
+        resources: current.resources.filter(item => item.id !== id),
+      }))
+    } catch (error) {
+      console.error(error)
+      window.alert(error.message || 'Could not remove this resource.')
+    }
+  }
+
+  // Save flashcards in Supabase
+  async function addFlashcard(event) {
     event.preventDefault()
 
     if (!flashcardQuestion.trim() || !flashcardAnswer.trim()) return
 
-    updateStudySet(selectedStudySet.id, current => ({
-      ...current,
-      flashcards: [
-        ...(current.flashcards || []),
-        {
-          id: Date.now(),
-          question: flashcardQuestion.trim(),
-          answer: flashcardAnswer.trim(),
-        },
-      ],
-    }))
+    try {
+      const row = await addStudyFlashcard(
+        userId,
+        selectedStudySet.id,
+        flashcardQuestion.trim(),
+        flashcardAnswer.trim()
+      )
 
-    setFlashcardQuestion('')
-    setFlashcardAnswer('')
+      updateStudySet(selectedStudySet.id, current => ({
+        ...current,
+        flashcards: [
+          ...current.flashcards,
+          {
+            id: row.id,
+            question: row.question,
+            answer: row.answer,
+          },
+        ],
+      }))
+
+      setFlashcardQuestion('')
+      setFlashcardAnswer('')
+    } catch (error) {
+      console.error(error)
+      window.alert(error.message || 'Could not create this flashcard.')
+    }
   }
 
-  function deleteFlashcard(id) {
-    updateStudySet(selectedStudySet.id, current => ({
-      ...current,
-      flashcards: current.flashcards.filter(card => card.id !== id),
-    }))
+  async function deleteFlashcard(id) {
+    try {
+      await deleteStudyFlashcard(userId, id)
 
-    setFlashcardIndex(0)
-    setQuizIndex(0)
-    setShowFlashcardAnswer(false)
-    setQuizRevealed(false)
+      updateStudySet(selectedStudySet.id, current => ({
+        ...current,
+        flashcards: current.flashcards.filter(card => card.id !== id),
+      }))
+
+      setFlashcardIndex(0)
+      setQuizIndex(0)
+      setShowFlashcardAnswer(false)
+      setQuizRevealed(false)
+    } catch (error) {
+      console.error(error)
+      window.alert(error.message || 'Could not delete this flashcard.')
+    }
   }
 
   async function sendTutorMessage(event) {
@@ -640,22 +675,6 @@ function App() {
     }
 
     try {
-      const attachedFiles = []
-
-      if (tutorStudySet?.files?.length) {
-        for (const file of tutorStudySet.files) {
-          const saved = await getFile(file.id)
-
-          if (saved?.blob) {
-            attachedFiles.push({
-              name: file.name,
-              type: file.type,
-              dataUrl: await toDataUrl(saved.blob),
-            })
-          }
-        }
-      }
-
       const response = await fetch(apiUrl, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -671,7 +690,7 @@ function App() {
                 resources: tutorStudySet.resources || [],
               }
             : null,
-          files: attachedFiles,
+          files: [],
         }),
       })
 
@@ -702,6 +721,7 @@ function App() {
     }
   }
 
+  // Study set workspace
   function renderStudyWorkspace() {
     if (!selectedStudySet) return null
 
@@ -751,18 +771,36 @@ function App() {
                 <h2>Your notes</h2>
                 <p>Write and organise your learning notes.</p>
               </div>
-              <span className="saved-indicator">● Saved automatically</span>
+              <span className="saved-indicator">
+                ● {savingNotes ? 'Saving...' : 'Saved to your account'}
+              </span>
             </div>
 
             <textarea
               className="study-notes-editor"
               value={selectedStudySet.notes || ''}
-              onChange={event =>
+              onChange={event => {
+                const content = event.target.value
                 updateStudySet(selectedStudySet.id, current => ({
                   ...current,
-                  notes: event.target.value,
+                  notes: content,
                 }))
-              }
+              }}
+              onBlur={async event => {
+                setSavingNotes(true)
+                try {
+                  await saveStudyNotes(
+                    userId,
+                    selectedStudySet.id,
+                    event.target.value
+                  )
+                } catch (error) {
+                  console.error(error)
+                  window.alert('Your notes could not be saved. Please try again.')
+                } finally {
+                  setSavingNotes(false)
+                }
+              }}
               placeholder="Start writing your notes here...
 
 Add definitions, examples, explanations and important points."
@@ -875,14 +913,7 @@ Add definitions, examples, explanations and important points."
                     </div>
                     <button
                       className="library-delete-button"
-                      onClick={() =>
-                        updateStudySet(selectedStudySet.id, current => ({
-                          ...current,
-                          resources: current.resources.filter(
-                            item => item.id !== resource.id
-                          ),
-                        }))
-                      }
+                      onClick={() => removeResource(resource.id)}
                     >
                       ×
                     </button>
@@ -1051,6 +1082,7 @@ Add definitions, examples, explanations and important points."
     )
   }
 
+  // Library page
   function renderLibrary() {
     return (
       <section className="library-page">
@@ -1067,204 +1099,223 @@ Add definitions, examples, explanations and important points."
             <button
               className="primary-button library-add-button"
               onClick={() => setShowCreateForm(true)}
+              disabled={libraryLoading}
             >
               + {createLabel()}
             </button>
           )}
         </div>
 
-        <div className="library-breadcrumb">
-          <button onClick={() => {
-            setSelectedSubjectId(null)
-            setSelectedChapterId(null)
-            setSelectedStudySetId(null)
-            setShowCreateForm(false)
-          }}>
-            My Library
-          </button>
-
-          {selectedSubject && (
-            <>
-              <span>/</span>
+        {libraryLoading ? (
+          <div className="study-empty-state">
+            <h3>Loading your library...</h3>
+          </div>
+        ) : libraryError ? (
+          <div className="study-empty-state">
+            <h3>{libraryError}</h3>
+            <button
+              className="secondary-button"
+              onClick={() => window.location.reload()}
+            >
+              Try again
+            </button>
+          </div>
+        ) : (
+          <>
+            <div className="library-breadcrumb">
               <button onClick={() => {
+                setSelectedSubjectId(null)
                 setSelectedChapterId(null)
                 setSelectedStudySetId(null)
                 setShowCreateForm(false)
               }}>
-                {selectedSubject.name}
+                My Library
               </button>
-            </>
-          )}
 
-          {selectedChapter && (
-            <>
-              <span>/</span>
-              <button onClick={() => {
-                setSelectedStudySetId(null)
-                setShowCreateForm(false)
-              }}>
-                {selectedChapter.name}
-              </button>
-            </>
-          )}
+              {selectedSubject && (
+                <>
+                  <span>/</span>
+                  <button onClick={() => {
+                    setSelectedChapterId(null)
+                    setSelectedStudySetId(null)
+                    setShowCreateForm(false)
+                  }}>
+                    {selectedSubject.name}
+                  </button>
+                </>
+              )}
 
-          {selectedStudySet && (
-            <>
-              <span>/</span>
-              <strong>{selectedStudySet.name}</strong>
-            </>
-          )}
-        </div>
+              {selectedChapter && (
+                <>
+                  <span>/</span>
+                  <button onClick={() => {
+                    setSelectedStudySetId(null)
+                    setShowCreateForm(false)
+                  }}>
+                    {selectedChapter.name}
+                  </button>
+                </>
+              )}
 
-        {selectedStudySet ? (
-          renderStudyWorkspace()
-        ) : (
-          <>
-            {renderCreateForm()}
+              {selectedStudySet && (
+                <>
+                  <span>/</span>
+                  <strong>{selectedStudySet.name}</strong>
+                </>
+              )}
+            </div>
 
-            {!selectedSubjectId && (
+            {selectedStudySet ? (
+              renderStudyWorkspace()
+            ) : (
               <>
-                <div className="library-section-heading">
-                  <div>
-                    <h2>Your subjects</h2>
-                    <p>Start by creating a subject for your studies.</p>
-                  </div>
-                  <span>{subjects.length} subjects</span>
-                </div>
+                {renderCreateForm()}
 
-                {subjects.length === 0 ? (
-                  <div className="library-empty">
-                    <div className="library-empty-icon">▤</div>
-                    <h3>Your learning library starts here</h3>
-                    <p>Create your first subject and organise your learning.</p>
-                    <button className="secondary-button" onClick={() => setShowCreateForm(true)}>
-                      + Create your first subject
-                    </button>
-                  </div>
-                ) : (
-                  <div className="library-card-grid">
-                    {subjects.map(subject => (
-                      <div className="library-card" key={subject.id}>
-                        <button
-                          className="library-card-main"
-                          onClick={() => {
-                            setSelectedSubjectId(subject.id)
-                            setSelectedChapterId(null)
-                            setSelectedStudySetId(null)
-                            setShowCreateForm(false)
-                          }}
-                        >
-                          <span className="library-card-icon">▤</span>
-                          <strong>{subject.name}</strong>
-                          <span>{subject.chapters.length} chapters</span>
-                        </button>
-                        <button
-                          className="library-delete-button"
-                          onClick={() => deleteSubject(subject.id)}
-                        >
-                          ×
+                {!selectedSubjectId && (
+                  <>
+                    <div className="library-section-heading">
+                      <div>
+                        <h2>Your subjects</h2>
+                        <p>Start by creating a subject for your studies.</p>
+                      </div>
+                      <span>{subjects.length} subjects</span>
+                    </div>
+
+                    {subjects.length === 0 ? (
+                      <div className="library-empty">
+                        <div className="library-empty-icon">▤</div>
+                        <h3>Your learning library starts here</h3>
+                        <p>Create your first subject and organise your learning.</p>
+                        <button className="secondary-button" onClick={() => setShowCreateForm(true)}>
+                          + Create your first subject
                         </button>
                       </div>
-                    ))}
-                  </div>
-                )}
-              </>
-            )}
-
-            {selectedSubject && !selectedChapter && (
-              <>
-                <div className="library-section-heading">
-                  <div>
-                    <h2>{selectedSubject.name}</h2>
-                    <p>Choose a chapter or create a new one.</p>
-                  </div>
-                  <span>{selectedSubject.chapters.length} chapters</span>
-                </div>
-
-                {selectedSubject.chapters.length === 0 ? (
-                  <div className="library-empty">
-                    <div className="library-empty-icon">📂</div>
-                    <h3>No chapters yet</h3>
-                    <p>Break this subject into smaller chapters.</p>
-                    <button className="secondary-button" onClick={() => setShowCreateForm(true)}>
-                      + Add your first chapter
-                    </button>
-                  </div>
-                ) : (
-                  <div className="library-card-grid">
-                    {selectedSubject.chapters.map(chapter => (
-                      <div className="library-card" key={chapter.id}>
-                        <button
-                          className="library-card-main"
-                          onClick={() => {
-                            setSelectedChapterId(chapter.id)
-                            setSelectedStudySetId(null)
-                            setShowCreateForm(false)
-                          }}
-                        >
-                          <span className="library-card-icon">📁</span>
-                          <strong>{chapter.name}</strong>
-                          <span>{chapter.sets.length} study sets</span>
-                        </button>
-                        <button
-                          className="library-delete-button"
-                          onClick={() => deleteChapter(chapter.id)}
-                        >
-                          ×
-                        </button>
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </>
-            )}
-
-            {selectedChapter && (
-              <>
-                <div className="library-section-heading">
-                  <div>
-                    <h2>{selectedChapter.name}</h2>
-                    <p>Your learning materials for this chapter.</p>
-                  </div>
-                  <span>{selectedChapter.sets.length} study sets</span>
-                </div>
-
-                {selectedChapter.sets.length === 0 ? (
-                  <div className="library-empty">
-                    <div className="library-empty-icon">▧</div>
-                    <h3>No study sets yet</h3>
-                    <p>Create a study set for your learning materials.</p>
-                    <button className="secondary-button" onClick={() => setShowCreateForm(true)}>
-                      + Create your first study set
-                    </button>
-                  </div>
-                ) : (
-                  <div className="study-set-list">
-                    {selectedChapter.sets.map(set => (
-                      <div className="study-set-card" key={set.id}>
-                        <button
-                          className="study-set-open"
-                          onClick={() => openStudySet(selectedSubject, selectedChapter, set)}
-                        >
-                          <div className="study-set-icon">▤</div>
-                          <div className="study-set-info">
-                            <strong>{set.name}</strong>
-                            <p>{set.description || 'Open your personal study space.'}</p>
-                            <span>
-                              {(set.files || []).length} files · {(set.flashcards || []).length} flashcards
-                            </span>
+                    ) : (
+                      <div className="library-card-grid">
+                        {subjects.map(subject => (
+                          <div className="library-card" key={subject.id}>
+                            <button
+                              className="library-card-main"
+                              onClick={() => {
+                                setSelectedSubjectId(subject.id)
+                                setSelectedChapterId(null)
+                                setSelectedStudySetId(null)
+                                setShowCreateForm(false)
+                              }}
+                            >
+                              <span className="library-card-icon">▤</span>
+                              <strong>{subject.name}</strong>
+                              <span>{subject.chapters.length} chapters</span>
+                            </button>
+                            <button
+                              className="library-delete-button"
+                              onClick={() => deleteSubject(subject.id)}
+                            >
+                              ×
+                            </button>
                           </div>
-                          <span className="study-set-arrow">→</span>
-                        </button>
-                        <button
-                          className="library-delete-button"
-                          onClick={() => deleteStudySet(set.id)}
-                        >
-                          ×
+                        ))}
+                      </div>
+                    )}
+                  </>
+                )}
+
+                {selectedSubject && !selectedChapter && (
+                  <>
+                    <div className="library-section-heading">
+                      <div>
+                        <h2>{selectedSubject.name}</h2>
+                        <p>Choose a chapter or create a new one.</p>
+                      </div>
+                      <span>{selectedSubject.chapters.length} chapters</span>
+                    </div>
+
+                    {selectedSubject.chapters.length === 0 ? (
+                      <div className="library-empty">
+                        <div className="library-empty-icon">📂</div>
+                        <h3>No chapters yet</h3>
+                        <p>Break this subject into smaller chapters.</p>
+                        <button className="secondary-button" onClick={() => setShowCreateForm(true)}>
+                          + Add your first chapter
                         </button>
                       </div>
-                    ))}
-                  </div>
+                    ) : (
+                      <div className="library-card-grid">
+                        {selectedSubject.chapters.map(chapter => (
+                          <div className="library-card" key={chapter.id}>
+                            <button
+                              className="library-card-main"
+                              onClick={() => {
+                                setSelectedChapterId(chapter.id)
+                                setSelectedStudySetId(null)
+                                setShowCreateForm(false)
+                              }}
+                            >
+                              <span className="library-card-icon">📁</span>
+                              <strong>{chapter.name}</strong>
+                              <span>{chapter.sets.length} study sets</span>
+                            </button>
+                            <button
+                              className="library-delete-button"
+                              onClick={() => deleteChapter(chapter.id)}
+                            >
+                              ×
+                            </button>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </>
+                )}
+
+                {selectedChapter && (
+                  <>
+                    <div className="library-section-heading">
+                      <div>
+                        <h2>{selectedChapter.name}</h2>
+                        <p>Your learning materials for this chapter.</p>
+                      </div>
+                      <span>{selectedChapter.sets.length} study sets</span>
+                    </div>
+
+                    {selectedChapter.sets.length === 0 ? (
+                      <div className="library-empty">
+                        <div className="library-empty-icon">▧</div>
+                        <h3>No study sets yet</h3>
+                        <p>Create a study set for your learning materials.</p>
+                        <button className="secondary-button" onClick={() => setShowCreateForm(true)}>
+                          + Create your first study set
+                        </button>
+                      </div>
+                    ) : (
+                      <div className="study-set-list">
+                        {selectedChapter.sets.map(set => (
+                          <div className="study-set-card" key={set.id}>
+                            <button
+                              className="study-set-open"
+                              onClick={() => openStudySet(selectedSubject, selectedChapter, set)}
+                            >
+                              <div className="study-set-icon">▤</div>
+                              <div className="study-set-info">
+                                <strong>{set.name}</strong>
+                                <p>{set.description || 'Open your personal study space.'}</p>
+                                <span>
+                                  {(set.files || []).length} files · {(set.flashcards || []).length} flashcards
+                                </span>
+                              </div>
+                              <span className="study-set-arrow">→</span>
+                            </button>
+                            <button
+                              className="library-delete-button"
+                              onClick={() => deleteStudySet(set.id)}
+                            >
+                              ×
+                            </button>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </>
                 )}
               </>
             )}
@@ -1274,6 +1325,7 @@ Add definitions, examples, explanations and important points."
     )
   }
 
+  // AI Tutor
   function renderTutor() {
     return (
       <section className="tutor-page">
@@ -1416,14 +1468,14 @@ Add definitions, examples, explanations and important points."
         </div>
 
         <p className="tutor-connection-note">
-          AI teaching requires a secure AI backend. Your uploaded files remain
-          in this browser until sent to a connected AI service.
+          AI teaching requires a secure AI backend. Your uploaded files are
+          stored privately in your account.
         </p>
       </section>
     )
   }
 
-  // AUTHENTICATION GATE
+  // Authentication gate
   if (authLoading) {
     return <div className="auth-loading">Loading MindMate...</div>
   }
@@ -1432,7 +1484,7 @@ Add definitions, examples, explanations and important points."
     return <Auth />
   }
 
-  // EXISTING MINDMATE INTERFACE
+  // Main application
   return (
     <div className="app-shell">
       <aside className="sidebar">
@@ -1655,6 +1707,10 @@ Add definitions, examples, explanations and important points."
             renderLibrary()
           ) : activePage === 'AI Tutor' ? (
             renderTutor()
+          ) : activePage === 'My Planner' ? (
+            <Productivity userId={userId} initialView="planner" />
+          ) : activePage === 'Focus Centre' ? (
+            <Productivity userId={userId} initialView="focus" />
           ) : (
             <section className="placeholder-page">
               <p className="eyebrow">MINDMATE WORKSPACE</p>
