@@ -66,12 +66,26 @@ export default function Auth() {
     }
   }
 
+  function switchMode() {
+    setMode(mode === 'signup' ? 'login' : 'signup')
+    setMessage('')
+    setPassword('')
+    setConfirmPassword('')
+  }
+
   return (
     <main className="auth-page">
       <section className="auth-brand">
-        <div className="auth-logo">M</div>
-        <span className="auth-brand-name">MindMate</span>
-        <p className="auth-tagline">YOUR PERSONAL LEARNING SPACE</p>
+        <div className="auth-brand-glow auth-brand-glow-one" />
+        <div className="auth-brand-glow auth-brand-glow-two" />
+
+        <div className="auth-brand-top">
+          <img
+            className="auth-website-banner"
+            src="/mindmate-website-banner.png"
+            alt="MindMate — Your learning space"
+          />
+        </div>
 
         <div className="auth-brand-message">
           <span>LEARN. GROW. ACHIEVE.</span>
@@ -80,31 +94,44 @@ export default function Auth() {
             One space for your notes, study materials, focus sessions
             and everything you need to make learning easier.
           </p>
+
+          <div className="auth-feature-list">
+            <div><span>✦</span> Organise your learning</div>
+            <div><span>✦</span> Build better study habits</div>
+            <div><span>✦</span> Make every session count</div>
+          </div>
         </div>
 
-        <span className="auth-footer">A LITTLE MORE FOCUS. A LOT MORE PROGRESS.</span>
+        <span className="auth-footer">
+          A LITTLE MORE FOCUS. A LOT MORE PROGRESS.
+        </span>
       </section>
 
       <section className="auth-form-section">
         <div className="auth-form-container">
           <div className="auth-mobile-brand">
-            <div className="auth-logo">M</div>
-            <span className="auth-brand-name">MindMate</span>
+            <img
+              className="auth-mobile-banner"
+              src="/mindmate-website-banner.png"
+              alt="MindMate — Your learning space"
+            />
           </div>
 
-          <span className="auth-eyebrow">
-            {mode === 'signup' ? 'CREATE YOUR SPACE' : 'WELCOME BACK'}
-          </span>
+          <div className="auth-form-heading">
+            <span className="auth-eyebrow">
+              {mode === 'signup' ? 'CREATE YOUR SPACE' : 'WELCOME BACK'}
+            </span>
 
-          <h2>
-            {mode === 'signup' ? 'Create your account' : 'Welcome back!'}
-          </h2>
+            <h2>
+              {mode === 'signup' ? 'Create your account' : 'Welcome back!'}
+            </h2>
 
-          <p className="auth-description">
-            {mode === 'signup'
-              ? 'Start building a better learning routine.'
-              : 'Sign in to continue your learning journey.'}
-          </p>
+            <p className="auth-description">
+              {mode === 'signup'
+                ? 'Start building a better learning routine.'
+                : 'Sign in to continue your learning journey.'}
+            </p>
+          </div>
 
           <form onSubmit={handleSubmit}>
             {mode === 'signup' && (
@@ -155,6 +182,7 @@ export default function Auth() {
                   value={confirmPassword}
                   onChange={event => setConfirmPassword(event.target.value)}
                   autoComplete="new-password"
+                  minLength={8}
                   required
                 />
               </label>
@@ -167,12 +195,14 @@ export default function Auth() {
             )}
 
             <button className="auth-submit" type="submit" disabled={loading}>
-              {loading
-                ? 'Please wait...'
-                : mode === 'signup'
-                  ? 'Create account'
-                  : 'Sign in'}
-              <span>→</span>
+              <span>
+                {loading
+                  ? 'Please wait...'
+                  : mode === 'signup'
+                    ? 'Create account'
+                    : 'Sign in'}
+              </span>
+              <span className="auth-submit-arrow">→</span>
             </button>
           </form>
 
@@ -180,13 +210,7 @@ export default function Auth() {
             {mode === 'signup'
               ? 'Already have an account?'
               : "Don't have an account?"}
-            <button
-              type="button"
-              onClick={() => {
-                setMode(mode === 'signup' ? 'login' : 'signup')
-                setMessage('')
-              }}
-            >
+            <button type="button" onClick={switchMode}>
               {mode === 'signup' ? 'Sign in' : 'Create account'}
             </button>
           </div>

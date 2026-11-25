@@ -1,3 +1,4 @@
+
 import { useEffect, useMemo, useState } from 'react'
 import './App.css'
 import { supabase } from './lib/supabase'
@@ -140,6 +141,7 @@ function App() {
   // SUPABASE AUTHENTICATION
   const [session, setSession] = useState(null)
   const [authLoading, setAuthLoading] = useState(true)
+  const [signingOut, setSigningOut] = useState(false)
 
   useEffect(() => {
     supabase.auth.getSession().then(({ data, error }) => {
@@ -157,6 +159,32 @@ function App() {
 
     return () => subscription.unsubscribe()
   }, [])
+
+  async function handleSignOut() {
+    if (signingOut) return
+
+    setSigningOut(true)
+
+    const { error } = await supabase.auth.signOut()
+
+    if (error) {
+      console.error('Sign out failed:', error)
+      window.alert('Could not sign out. Please try again.')
+      setSigningOut(false)
+      return
+    }
+
+    setSession(null)
+    setSigningOut(false)
+  }
+
+  // STUDENT ACCOUNT DETAILS
+  const studentName =
+    session?.user?.user_metadata?.full_name?.trim() ||
+    session?.user?.email?.split('@')[0] ||
+    'Student'
+
+  const studentInitial = studentName.charAt(0).toUpperCase()
 
   // EXISTING MINDMATE STATE
   const [activePage, setActivePage] = useState('Dashboard')
@@ -1409,7 +1437,11 @@ Add definitions, examples, explanations and important points."
     <div className="app-shell">
       <aside className="sidebar">
         <div className="brand">
-          <div className="brand-mark">M</div>
+          <img
+            className="brand-logo-image"
+            src="/mindmate-app-icon.png"
+            alt="MindMate"
+          />
           <div className="brand-name">
             <h2>MindMate</h2>
             <span>YOUR LEARNING SPACE</span>
@@ -1447,13 +1479,21 @@ Add definitions, examples, explanations and important points."
           </button>
 
           <div className="profile">
-            <div className="profile-avatar">S</div>
-            <div>
-              <strong>My Workspace</strong>
+            <div className="profile-avatar">{studentInitial}</div>
+            <div className="profile-details">
+              <strong>{studentName}</strong>
               <span>Personal account</span>
             </div>
-            <span className="profile-menu">···</span>
           </div>
+
+          <button
+            className="sign-out-button"
+            onClick={handleSignOut}
+            disabled={signingOut}
+          >
+            <span>↪</span>
+            {signingOut ? 'Signing out...' : 'Sign out'}
+          </button>
         </div>
       </aside>
 
@@ -1464,7 +1504,7 @@ Add definitions, examples, explanations and important points."
           </div>
           <div className="topbar-actions">
             <button className="icon-button" aria-label="Notifications">♧</button>
-            <button className="top-avatar">S</button>
+            <div className="top-avatar">{studentInitial}</div>
           </div>
         </header>
 
@@ -1474,7 +1514,9 @@ Add definitions, examples, explanations and important points."
               <section className="welcome-section">
                 <div>
                   <p className="eyebrow">YOUR PERSONAL LEARNING SPACE</p>
-                  <h1>Welcome back! <span>✦</span></h1>
+                  <h1 className="dashboard-welcome-title">
+                    Welcome back, {studentName}! <span>✦</span>
+                  </h1>
                   <p className="welcome-subtitle">
                     Ready to make today count? Let's get learning.
                   </p>
