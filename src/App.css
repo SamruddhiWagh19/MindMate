@@ -1760,3 +1760,10 @@ select:focus-visible {
 .brand-name h2 {
   color: #ffffff;
 }
+.dashboard-date {
+  margin-top: 12px;
+  color: #B8EDFF;
+  font-size: 15px;
+  font-weight: 600;
+  letter-spacing: 0.4px;
+}

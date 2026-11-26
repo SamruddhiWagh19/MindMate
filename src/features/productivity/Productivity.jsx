@@ -2,21 +2,21 @@ import { useEffect, useMemo, useState } from 'react'
 
 const pad = value => String(value).padStart(2, '0')
 const dateKey = date => `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`
-const todayKey = dateKey(new Date())
 const defaultTasks = []
 
 export default function Productivity({ userId, initialView = 'planner' }) {
   const storageKey = `mindmate-productivity-${userId || 'guest'}`
   const [view, setView] = useState(initialView)
+  const [todayKey, setTodayKey] = useState(() => dateKey(new Date()))
   const [month, setMonth] = useState(() => new Date(new Date().getFullYear(), new Date().getMonth(), 1))
-  const [selectedDate, setSelectedDate] = useState(todayKey)
+  const [selectedDate, setSelectedDate] = useState(() => dateKey(new Date()))
   const [events, setEvents] = useState([])
   const [tasks, setTasks] = useState(defaultTasks)
   const [storageLoaded, setStorageLoaded] = useState(false)
   const [eventTitle, setEventTitle] = useState('')
   const [eventTime, setEventTime] = useState('09:00')
   const [taskTitle, setTaskTitle] = useState('')
-  const [taskDue, setTaskDue] = useState(todayKey)
+  const [taskDue, setTaskDue] = useState(() => dateKey(new Date()))
   const [taskPriority, setTaskPriority] = useState('Medium')
   const [timerMode, setTimerMode] = useState('pomodoro')
   const [duration, setDuration] = useState(25)
@@ -25,6 +25,26 @@ export default function Productivity({ userId, initialView = 'planner' }) {
   const [running, setRunning] = useState(false)
   const [sessions, setSessions] = useState(0)
   const [focusSubject, setFocusSubject] = useState('Study session')
+
+  // Refresh the local date while the app is open. Historical tasks remain saved
+  // with their original due dates; only the selected day and new-task date move.
+  useEffect(() => {
+    const refreshDate = () => setTodayKey(dateKey(new Date()))
+    const interval = window.setInterval(refreshDate, 60 * 1000)
+    document.addEventListener('visibilitychange', refreshDate)
+    window.addEventListener('focus', refreshDate)
+    return () => {
+      window.clearInterval(interval)
+      document.removeEventListener('visibilitychange', refreshDate)
+      window.removeEventListener('focus', refreshDate)
+    }
+  }, [])
+
+  useEffect(() => {
+    setSelectedDate(todayKey)
+    setTaskDue(todayKey)
+    setMonth(new Date(Number(todayKey.slice(0, 4)), Number(todayKey.slice(5, 7)) - 1, 1))
+  }, [todayKey])
 
   useEffect(() => {
     try {
@@ -39,8 +59,21 @@ export default function Productivity({ userId, initialView = 'planner' }) {
   }, [storageKey])
 
   useEffect(() => {
-    if (storageLoaded) localStorage.setItem(storageKey, JSON.stringify({ events, tasks }))
-  }, [storageKey, events, tasks, storageLoaded])
+    if (!storageLoaded) return
+    localStorage.setItem(storageKey, JSON.stringify({ events, tasks }))
+    window.dispatchEvent(new CustomEvent('mindmate-tasks-updated', {
+      detail: { userId: userId || 'guest', tasks },
+    }))
+  }, [storageKey, events, tasks, storageLoaded, userId])
+
+  useEffect(() => {
+    function handleTaskUpdate(event) {
+      if (event.detail?.userId !== (userId || 'guest')) return
+      if (Array.isArray(event.detail.tasks)) setTasks(event.detail.tasks)
+    }
+    window.addEventListener('mindmate-tasks-updated', handleTaskUpdate)
+    return () => window.removeEventListener('mindmate-tasks-updated', handleTaskUpdate)
+  }, [userId])
 
   useEffect(() => {
     if (!running) return undefined
@@ -227,7 +260,7 @@ export default function Productivity({ userId, initialView = 'planner' }) {
       {(view === 'planner' || view === 'tasks') && (
         <div className="mmprod-card">
           <div className="mmprod-head">
-            <div><h3>Task planner</h3><p className="mmprod-muted">{completedTasks} of {tasks.length} tasks completed</p></div>
+            <div><h3>Task planner</h3><p className="mmprod-muted">All saved tasks · {completedTasks} of {tasks.length} completed</p></div>
             <span className="mmprod-priority">{tasks.length ? Math.round(completedTasks / tasks.length * 100) : 0}% complete</span>
           </div>
           <form className="mmprod-form" onSubmit={addTask}>

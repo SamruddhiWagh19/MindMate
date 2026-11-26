@@ -1,3 +1,4 @@
+
 import { useEffect, useMemo, useState } from 'react'
 import './App.css'
 import { supabase } from './lib/supabase'
@@ -66,6 +67,11 @@ function formatSize(bytes) {
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
 }
 
+function getLocalDateKey(date = new Date()) {
+  const pad = value => String(value).padStart(2, '0')
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`
+}
+
 function App() {
   // Authentication
   const [session, setSession] = useState(null)
@@ -126,12 +132,40 @@ function App() {
 
   // Main application state
   const [activePage, setActivePage] = useState('Dashboard')
+  const [todayKey, setTodayKey] = useState(() => getLocalDateKey())
 
-  const [tasks, setTasks] = useState([
-    { id: 1, title: 'Review Java concepts', done: false },
-    { id: 2, title: 'Complete mathematics practice', done: false },
-    { id: 3, title: 'Revise yesterday’s notes', done: true },
-  ])
+  // Keep the displayed date current, including when the app stays open overnight.
+  useEffect(() => {
+    const refreshDate = () => setTodayKey(getLocalDateKey())
+    const interval = window.setInterval(refreshDate, 60 * 1000)
+    document.addEventListener('visibilitychange', refreshDate)
+    window.addEventListener('focus', refreshDate)
+    return () => {
+      window.clearInterval(interval)
+      document.removeEventListener('visibilitychange', refreshDate)
+      window.removeEventListener('focus', refreshDate)
+    }
+  }, [])
+
+  const [tasks, setTasks] = useState([])
+  const productivityStorageKey = `mindmate-productivity-${userId || 'guest'}`
+
+  useEffect(() => {
+    try {
+      const saved = JSON.parse(localStorage.getItem(productivityStorageKey) || '{}')
+      setTasks(Array.isArray(saved.tasks) ? saved.tasks : [])
+    } catch {
+      setTasks([])
+    }
+
+    function handleProductivityUpdate(event) {
+      if (event.detail?.userId !== (userId || 'guest')) return
+      setTasks(Array.isArray(event.detail.tasks) ? event.detail.tasks : [])
+    }
+
+    window.addEventListener('mindmate-tasks-updated', handleProductivityUpdate)
+    return () => window.removeEventListener('mindmate-tasks-updated', handleProductivityUpdate)
+  }, [productivityStorageKey, userId])
 
   // Supabase Library state
   const [subjects, setSubjects] = useState([])
@@ -225,7 +259,8 @@ function App() {
     set => String(set.id) === String(tutorSetId)
   )
 
-  const completedTasks = tasks.filter(task => task.done).length
+  const todayTasks = tasks.filter(task => task.due === todayKey)
+  const completedTasks = todayTasks.filter(task => task.done).length
 
   function updateStudySet(setId, updater) {
     setSubjects(current =>
@@ -242,11 +277,21 @@ function App() {
   }
 
   function toggleTask(id) {
-    setTasks(current =>
-      current.map(task =>
+    setTasks(current => {
+      const updated = current.map(task =>
         task.id === id ? { ...task, done: !task.done } : task
       )
-    )
+      try {
+        const saved = JSON.parse(localStorage.getItem(productivityStorageKey) || '{}')
+        localStorage.setItem(productivityStorageKey, JSON.stringify({ ...saved, tasks: updated }))
+      } catch (error) {
+        console.error('Could not save task update:', error)
+      }
+      window.dispatchEvent(new CustomEvent('mindmate-tasks-updated', {
+        detail: { userId: userId || 'guest', tasks: updated },
+      }))
+      return updated
+    })
   }
 
   function openLibrary() {
@@ -1574,8 +1619,8 @@ Add definitions, examples, explanations and important points."
                   </p>
                 </div>
                 <div className="date-display">
-                  <span>YOUR WORKSPACE</span>
-                  <strong>My Dashboard</strong>
+                  <span>TODAY'S DATE</span>
+                  <strong>{new Date(`${todayKey}T12:00:00`).toLocaleDateString(undefined, { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })}</strong>
                 </div>
               </section>
 
@@ -1594,7 +1639,7 @@ Add definitions, examples, explanations and important points."
                     <span>Tasks completed</span>
                     <span className="stat-icon">✓</span>
                   </div>
-                  <h2>{completedTasks}/{tasks.length}</h2>
+                  <h2>{completedTasks}/{todayTasks.length}</h2>
                   <p>Your daily task progress</p>
                 </div>
 
@@ -1624,11 +1669,11 @@ Add definitions, examples, explanations and important points."
                       <h3>Today's tasks</h3>
                       <p>Small steps make big progress.</p>
                     </div>
-                    <span className="panel-count">{completedTasks}/{tasks.length}</span>
+                    <span className="panel-count">{completedTasks}/{todayTasks.length}</span>
                   </div>
 
                   <div className="task-list">
-                    {tasks.map(task => (
+                    {todayTasks.length ? todayTasks.map(task => (
                       <label className="task-item" key={task.id}>
                         <input
                           type="checkbox"
@@ -1639,7 +1684,7 @@ Add definitions, examples, explanations and important points."
                           {task.title}
                         </span>
                       </label>
-                    ))}
+                    )) : <p className="empty-state">No tasks scheduled for today. Add tasks in My Planner.</p>}
                   </div>
                 </div>
 
