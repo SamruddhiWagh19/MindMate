@@ -4,6 +4,8 @@ import './App.css'
 import { supabase } from './lib/supabase'
 import Auth from './Auth'
 import Productivity from './features/productivity/Productivity'
+import Notes from './features/Notes'
+import Quizzes from './features/Quizzes'
 
 import {
   loadLibrary,
@@ -300,6 +302,18 @@ function App() {
     setSelectedChapterId(null)
     setSelectedStudySetId(null)
     setShowCreateForm(false)
+  }
+
+  async function saveNotesFromNotesPage(studySetId, content) {
+    await saveStudyNotes(userId, studySetId, content)
+    updateStudySet(studySetId, current => ({ ...current, notes: content }))
+  }
+
+  function openStudySetFromNotes(subjectId, chapterId, studySetId) {
+    const subject = subjects.find(item => item.id === subjectId)
+    const chapter = subject?.chapters.find(item => item.id === chapterId)
+    const studySet = chapter?.sets.find(item => item.id === studySetId)
+    if (subject && chapter && studySet) openStudySet(subject, chapter, studySet)
   }
 
   function openStudySet(subject, chapter, studySet) {
@@ -1756,6 +1770,10 @@ Add definitions, examples, explanations and important points."
             <Productivity userId={userId} initialView="planner" />
           ) : activePage === 'Focus Centre' ? (
             <Productivity userId={userId} initialView="focus" />
+          ) : activePage === 'My Notes' ? (
+            <Notes subjects={subjects} onSaveNotes={saveNotesFromNotesPage} onOpenStudySet={openStudySetFromNotes} />
+          ) : activePage === 'Quizzes' ? (
+            <Quizzes userId={userId} studySets={allStudySets} />
           ) : (
             <section className="placeholder-page">
               <p className="eyebrow">MINDMATE WORKSPACE</p>
