@@ -1,8 +1,8 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { supabase } from './lib/supabase'
 import './Auth.css'
 
-export default function Auth() {
+export default function Auth({ recoveryMode = false, recoveryEmail = '', onRecoveryComplete }) {
   const [mode, setMode] = useState('signup')
   const [fullName, setFullName] = useState('')
   const [email, setEmail] = useState('')
@@ -12,6 +12,17 @@ export default function Auth() {
   const [loading, setLoading] = useState(false)
   const [message, setMessage] = useState('')
   const [messageType, setMessageType] = useState('info')
+
+  useEffect(() => {
+    if (recoveryMode) {
+      setMode('reset-link')
+      setEmail(recoveryEmail || '')
+      setPassword('')
+      setConfirmPassword('')
+      setOtp('')
+      setMessage('')
+    }
+  }, [recoveryMode, recoveryEmail])
 
   function notify(text, type = 'info') {
     setMessage(text)
@@ -42,8 +53,8 @@ export default function Auth() {
       return
     }
 
-    if (mode === 'reset') {
-      if (!otp.trim()) {
+    if (mode === 'reset' || mode === 'reset-link') {
+      if (mode === 'reset' && !otp.trim()) {
         notify('Enter the recovery code from your email.', 'error')
         return
       }
@@ -58,12 +69,16 @@ export default function Auth() {
 
       setLoading(true)
       try {
-        const { error: verifyError } = await supabase.auth.verifyOtp({
-          email: email.trim(),
-          token: otp.trim(),
-          type: 'recovery',
-        })
-        if (verifyError) throw verifyError
+        // A recovery link establishes a recovery session automatically.
+        // The manual-code flow still verifies its OTP before updating the password.
+        if (mode === 'reset') {
+          const { error: verifyError } = await supabase.auth.verifyOtp({
+            email: email.trim(),
+            token: otp.trim(),
+            type: 'recovery',
+          })
+          if (verifyError) throw verifyError
+        }
 
         const { error: updateError } = await supabase.auth.updateUser({ password })
         if (updateError) throw updateError
@@ -73,6 +88,7 @@ export default function Auth() {
         setConfirmPassword('')
         setOtp('')
         setMode('login')
+        if (onRecoveryComplete) onRecoveryComplete()
         notify('Your password has been updated. You can now sign in with your new password.', 'success')
       } catch (error) {
         notify(error.message || 'The code could not be verified. Request a new code and try again.', 'error')
@@ -137,7 +153,8 @@ export default function Auth() {
 
   const isSignup = mode === 'signup'
   const isForgot = mode === 'forgot'
-  const isReset = mode === 'reset'
+  const isReset = mode === 'reset' || mode === 'reset-link'
+  const requiresOtp = mode === 'reset'
   const isLogin = mode === 'login'
 
   return (
@@ -179,7 +196,7 @@ export default function Auth() {
                 : isForgot
                   ? 'Enter your account email and we’ll send you a recovery code.'
                   : isReset
-                    ? 'Enter the code from your email and set a new password.'
+                    ? requiresOtp ? 'Enter the recovery code from your email and set a new password.' : 'Choose a new password for your account.'
                     : 'Sign in to continue your learning journey.'}
             </p>
           </div>
@@ -205,7 +222,7 @@ export default function Auth() {
               />
             </label>
 
-            {isReset && (
+            {requiresOtp && (
               <label>
                 Email recovery code
                 <input type="text" inputMode="numeric" autoComplete="one-time-code" placeholder="Enter the code from your email" value={otp} onChange={event => setOtp(event.target.value)} required />
@@ -250,7 +267,7 @@ export default function Auth() {
             </div>
           )}
 
-          {isReset && (
+          {requiresOtp && (
             <div className="auth-forgot">
               <button type="button" onClick={() => switchMode('forgot')}>Send a new recovery code</button>
             </div>

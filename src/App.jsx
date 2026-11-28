@@ -79,6 +79,7 @@ function App() {
   const [session, setSession] = useState(null)
   const [authLoading, setAuthLoading] = useState(true)
   const [signingOut, setSigningOut] = useState(false)
+  const [isPasswordRecovery, setIsPasswordRecovery] = useState(false)
 
   useEffect(() => {
     let mounted = true
@@ -94,11 +95,17 @@ function App() {
     const {
       data: { subscription },
     } = supabase.auth.onAuthStateChange((event, newSession) => {
-      if (event === 'PASSWORD_RECOVERY') return
-      if (mounted) {
+      if (!mounted) return
+
+      if (event === 'PASSWORD_RECOVERY') {
         setSession(newSession)
+        setIsPasswordRecovery(true)
         setAuthLoading(false)
+        return
       }
+
+      setSession(newSession)
+      setAuthLoading(false)
     })
 
     return () => {
@@ -1537,6 +1544,19 @@ Add definitions, examples, explanations and important points."
   // Authentication gate
   if (authLoading) {
     return <div className="auth-loading">Loading MindMate...</div>
+  }
+
+  if (isPasswordRecovery) {
+    return (
+      <Auth
+        recoveryMode
+        recoveryEmail={session?.user?.email || ''}
+        onRecoveryComplete={() => {
+          setIsPasswordRecovery(false)
+          setSession(null)
+        }}
+      />
+    )
   }
 
   if (!session) {
